@@ -51,6 +51,42 @@ struct sr_if* corresponding_interface(struct sr_instance *sr, uint32_t ip){
   return destination;
 }
 
+int lowbit(uint32_t n)
+{
+  int lowest=-1,counter=33;
+  unsigned i;
+  for (i = 1 << 31; i > 0; i = i / 2)
+    {
+      counter--;
+      if((n&i)==0){lowest=counter;break;}
+    }
+  /* printf("$$ lowest:%d  $$\n",lowest); */
+  return lowest;
+}
+
+struct sr_rt* getLargestPrefix(struct sr_rt * rt_walker,uint32_t ip)
+{
+  uint32_t temp_ip=0;
+  ip=htonl(ip);
+  int min=33;
+  struct sr_rt* result =0;
+  while(rt_walker)
+    {
+      temp_ip=htonl(rt_walker->dest.s_addr);
+      int temp=lowbit(~(temp_ip ^ ip));
+  
+      if(temp>lowbit(htonl(rt_walker->mask.s_addr)))
+        {
+          temp=33;
+        }
+  
+      if(temp<min){min=temp;result=rt_walker;}
+      rt_walker=rt_walker->next;
+    }
+  if(min==33){return NULL;}
+  else{return result;}
+}
+
 
 void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
   /* TODO: Fill this in */
@@ -78,7 +114,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
         sr_ip_hdr_t * protocol_header;
         protocol_header = (sr_ip_hdr_t *)(packets->buf + sizeof(sr_ethernet_hdr_t));
         protocol_header->ip_dst = protocol_header->ip_src;
-        protocol_header->ip_src = iface ->ip;
+        protocol_header->ip_src = iface->ip;
         protocol_header->ip_p = ip_protocol_icmp;
 
         sr_icmp_t3_hdr_t* icmp;
@@ -130,9 +166,11 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
 
       printf("---sent arp req--- \n");
       print_addr_ip_int(req->ip);
-      print_hdrs(packet, size_req);
+      /* print_hdrs(packet, size_req); */
 
       free(packet);
+      req->sent = time(NULL);
+      req->times_sent++;
     }
   }
 }
@@ -204,8 +242,8 @@ void sr_handlepacket(struct sr_instance* sr,
   assert(packet);
   assert(interface);
 
-  printf("*** -> Received packet of length %d %s\n",len,interface);
-  print_hdrs(packet, len);
+  printf("*** -> Received packet of length %d from %s\n",len,interface);
+  /* print_hdrs(packet, len); */
 
   /* printf("------ %02x    %01x-----\n", ethertype(packet),ip_protocol(packet)); */
 
@@ -238,7 +276,7 @@ void sr_handlepacket(struct sr_instance* sr,
 
         sr_send_packet(sr,packet,len,interface);
         printf("----- sent arp reply ----\n");
-        print_hdrs(packet, len);
+        /* print_hdrs(packet, len); */
 
       }
     } else {
@@ -275,9 +313,9 @@ void sr_handlepacket(struct sr_instance* sr,
     /* printf("---ip packet---- %d ",packet_ip_header->ip_sum); */
     int ip_sum_back = packet_ip_header->ip_sum;
     packet_ip_header->ip_sum = 0;
-    /* printf(" %d \n",cksum(packet_ip_header,sizeof(sr_ip_hdr_t))); */
+    printf(" %d \n",cksum(packet_ip_header,sizeof(sr_ip_hdr_t)));
     if(ip_sum_back != cksum(packet_ip_header,sizeof(sr_ip_hdr_t))) return;
-
+    packet_ip_header->ip_ttl--;
     /* packet_ip_header->ip_sum = cksum((void*)&packet_ip_header,sizeof(sr_ip_hdr_t)); */
 
     /* if icmp */
@@ -316,10 +354,11 @@ void sr_handlepacket(struct sr_instance* sr,
     else {
       printf("packet forwarding-----\n");
       struct sr_arpentry *entry;
-      entry = sr_arpcache_lookup(&sr->cache, packet_ip_header->ip_dst);
+      struct sr_rt * rt_entry =  getLargestPrefix(sr->routing_table, packet_ip_header->ip_dst);
 
-      struct sr_if* dest_interface = corresponding_interface(sr, 
-          packet_ip_header->ip_dst);
+      entry = sr_arpcache_lookup(&sr->cache, rt_entry->dest.s_addr);
+
+      struct sr_if* dest_interface = sr_get_interface(sr, rt_entry->interface );
 
       if(entry!=NULL){
 
@@ -327,15 +366,15 @@ void sr_handlepacket(struct sr_instance* sr,
           packet_header->ether_dhost[i] = entry->mac[i];
           packet_header->ether_shost[i] = dest_interface->addr[i];
         }
-
+        packet_ip_header->ip_sum = cksum(packet_ip_header,sizeof(sr_ip_hdr_t));
         sr_send_packet(sr, packet, len, dest_interface->name);
         printf("---packet sent after cache lookup---\n");
-        print_hdrs(packet, len);
+        /* print_hdrs(packet, len); */
       } else {
         struct sr_arpreq* req;
 
         printf("adding to queue----\n");
-
+        packet_ip_header->ip_sum = cksum(packet_ip_header,sizeof(sr_ip_hdr_t));
         req = sr_arpcache_queuereq(&sr->cache, packet_ip_header->ip_dst, 
             packet, len,dest_interface->name);
         handle_arpreq(sr, req);
