@@ -86,6 +86,18 @@ struct sr_rt* getLargestPrefix(struct sr_rt * rt_walker,uint32_t ip)
 }
 
 
+
+int is_own(struct sr_if* iface, sr_ip_hdr_t *packet_ip_header){
+  while(iface != NULL){
+    if(iface->ip == packet_ip_header->ip_dst){
+      return 1;
+    }
+    iface = iface->next;
+  }
+  return 0;
+}
+
+
 void send_icmp_error(struct sr_instance* sr, int type, int code,
                uint8_t * packet/* lent */,
                struct sr_if* interface/* lent */) {
@@ -107,9 +119,13 @@ void send_icmp_error(struct sr_instance* sr, int type, int code,
       reply_ether_hdr->ether_type=htons(ethertype_ip);
 
       reply_ip_hdr->ip_p=ip_protocol_icmp;
-      reply_ip_hdr->ip_dst=packet_ip_header->ip_src;
+      struct sr_if *intended;
+      if(is_own(sr->if_list, packet_ip_header) == 1 && type == 11) {
+        intended = lookup_interface(sr, packet_ip_header->ip_dst);
+        reply_ip_hdr->ip_src=intended->ip;
+      } else reply_ip_hdr->ip_src=interface->ip;
 
-      reply_ip_hdr->ip_src=interface->ip;
+      reply_ip_hdr->ip_dst=packet_ip_header->ip_src;
       reply_ip_hdr->ip_len=ntohs(icmp_packet_len-sizeof(sr_ethernet_hdr_t));
       reply_ip_hdr->ip_id=8;
       reply_ip_hdr->ip_sum=0;
@@ -138,6 +154,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
       while(packets!=NULL){
         struct sr_if *interface = lookup_interface(sr,req->ip);
         send_icmp_error(sr, 3, 1, packets->buf, interface);
+        printf("i321s the ttl\n");
         packets = packets->next;
       }
       sr_arpreq_destroy(&(sr->cache),req);
@@ -163,7 +180,6 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
       memcpy(ethernet_header->ether_shost,interface->addr,ETHER_ADDR_LEN);
       memcpy(arp_header->ar_sha,interface->addr,ETHER_ADDR_LEN);
 
-
       ethernet_header->ether_type = htons(ethertype_arp);
 
       arp_header->ar_op  = htons(arp_op_request);
@@ -177,9 +193,6 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
 
       sr_send_packet(sr, packet, size_req, interface->name);
 
-
-
-
       free(packet);
       req->sent = time(NULL);
       req->times_sent++;
@@ -187,16 +200,6 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
   }
 }
 
-
-int is_own(struct sr_if* iface, sr_ip_hdr_t *packet_ip_header){
-    while(iface != NULL){
-      if(iface->ip == packet_ip_header->ip_dst){
-        return 1;
-      }
-      iface = iface->next;
-    }
-    return 0;
-}
 
 
 
@@ -214,15 +217,10 @@ void process_ip(struct sr_instance* sr,
 
   assert(ip_sum_back == cksum(packet_ip_header,sizeof(sr_ip_hdr_t)));
 
-  if(packet_ip_header->ip_ttl <= 1) {
-    printf("%d is the ttl\n", packet_ip_header->ip_ttl);
-    send_icmp_error(sr, 11, 0, packet, interface);
-    return;
-  }
 
-  if(is_own(sr->if_list,packet_ip_header)){
+
+  if(is_own(sr->if_list,packet_ip_header) && packet_ip_header->ip_ttl > 1){
     if (packet_ip_header->ip_p == ip_protocol_icmp) {
-      printf("router ping handling-----\n");
       sr_icmp_t3_hdr_t *icmp_header;
       icmp_header = (sr_icmp_t3_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t)
                                         + sizeof(sr_ip_hdr_t));
@@ -239,19 +237,26 @@ void process_ip(struct sr_instance* sr,
         int dst = packet_ip_header->ip_src;
         packet_ip_header->ip_src = packet_ip_header->ip_dst;
         packet_ip_header->ip_dst = dst;
-
         icmp_header->icmp_type = 0;
-
         icmp_header->icmp_sum = 0;
         icmp_header->icmp_sum = cksum(icmp_header,len - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t));
-
         packet_ip_header->ip_sum = cksum(packet_ip_header,sizeof(sr_ip_hdr_t));
         sr_send_packet(sr,packet,len,interface->name);
+        return;
       }
     } else {
       send_icmp_error(sr, 3, 3, packet, interface);
+      printf("%d the ttl\n",packet_ip_header->ip_ttl);
+      return;
     }
+
   }
+  if(packet_ip_header->ip_ttl <= 1) {
+    printf("%d is the ttl\n", packet_ip_header->ip_ttl);
+    send_icmp_error(sr, 11, 0, packet, interface);
+    return;
+  }
+
 
   else {
     struct sr_arpentry *entry;
@@ -278,7 +283,9 @@ void process_ip(struct sr_instance* sr,
                                    packet, len,dest_interface->name);
         handle_arpreq(sr, req);
       }
-    } else send_icmp_error(sr, 3, 0, packet, interface);
+    } else {send_icmp_error(sr, 3, 0, packet, interface);
+      printf("i321s the ttl\n");}
+    
   }
   return;
 }
