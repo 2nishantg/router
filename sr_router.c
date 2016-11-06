@@ -120,7 +120,7 @@ void send_icmp_error(struct sr_instance* sr, int type, int code,
 
       reply_ip_hdr->ip_p=ip_protocol_icmp;
       struct sr_if *intended;
-      if(is_own(sr->if_list, packet_ip_header) == 1 && type == 11) {
+      if(is_own(sr->if_list, packet_ip_header) == 1) {
         intended = lookup_interface(sr, packet_ip_header->ip_dst);
         reply_ip_hdr->ip_src=intended->ip;
       } else reply_ip_hdr->ip_src=interface->ip;
@@ -171,7 +171,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
 
       sr_ethernet_hdr_t* ethernet_header;
       ethernet_header = (sr_ethernet_hdr_t*)packet;
-
+      
       sr_arp_hdr_t* arp_header;
       arp_header = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
 
@@ -219,7 +219,7 @@ void process_ip(struct sr_instance* sr,
 
 
 
-  if(is_own(sr->if_list,packet_ip_header) && packet_ip_header->ip_ttl > 1){
+  if(is_own(sr->if_list,packet_ip_header)){
     if (packet_ip_header->ip_p == ip_protocol_icmp) {
       sr_icmp_t3_hdr_t *icmp_header;
       icmp_header = (sr_icmp_t3_hdr_t*)(packet + sizeof(sr_ethernet_hdr_t)
@@ -244,20 +244,17 @@ void process_ip(struct sr_instance* sr,
         sr_send_packet(sr,packet,len,interface->name);
         return;
       }
-    } else {
+    } else if (packet_ip_header->ip_p == 17 || packet_ip_header->ip_p == 6){
       send_icmp_error(sr, 3, 3, packet, interface);
-      printf("%d the ttl\n",packet_ip_header->ip_ttl);
       return;
     }
 
   }
+
   if(packet_ip_header->ip_ttl <= 1) {
-    printf("%d is the ttl\n", packet_ip_header->ip_ttl);
     send_icmp_error(sr, 11, 0, packet, interface);
     return;
   }
-
-
   else {
     struct sr_arpentry *entry;
     packet_ip_header->ip_ttl--;
@@ -283,9 +280,7 @@ void process_ip(struct sr_instance* sr,
                                    packet, len,dest_interface->name);
         handle_arpreq(sr, req);
       }
-    } else {send_icmp_error(sr, 3, 0, packet, interface);
-      printf("i321s the ttl\n");}
-    
+    } else send_icmp_error(sr, 3, 0, packet, interface);
   }
   return;
 }
