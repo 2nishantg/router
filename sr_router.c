@@ -31,58 +31,34 @@
 /* See pseudo-code in sr_arpcache.h */
 
 struct sr_if* lookup_interface(struct sr_instance *sr, uint32_t ip){
-  int i=0,j=0;
-  char *a,*b;
-
+  uint32_t mx = 0,temp_ip;
+  ip = htonl(ip);
   struct sr_if* interface, *destination;
   interface = sr->if_list;
   while(interface != NULL){
-    j=0;
-    a = (char*)&ip;
-    b = (char*)&interface->ip;
-        while(a[j]==b[j]) j++;
-    if(j>=i){
+    temp_ip = htonl(interface->ip);
+    unsigned int temp=(~(temp_ip ^ ip));
+    if(temp > mx) {
       destination = interface;
-      i = j;
+      mx = temp;
     }
     interface = interface->next;
   }
   return destination;
 }
 
-int lowbit(uint32_t n) {
-  int lowest=-1,counter=33;
-  unsigned i;
-  for (i = 1 << 31; i > 0; i = i / 2)
-    {
-      counter--;
-      if((n&i)==0){lowest=counter;break;}
-    }
-  /* printf("$$ lowest:%d  $$\n",lowest); */
-  return lowest;
-}
-
-struct sr_rt* getLargestPrefix(struct sr_rt * rt_walker,uint32_t ip)
-{
-  uint32_t temp_ip=0;
+struct sr_rt* largest_prefix_match(struct sr_rt * rtable,uint32_t ip) {
   ip=htonl(ip);
-  int min=33;
+  uint32_t mx = 0, temp_ip;
   struct sr_rt* result =0;
-  while(rt_walker)
-    {
-      temp_ip=htonl(rt_walker->dest.s_addr);
-      int temp=lowbit(~(temp_ip ^ ip));
-
-      if(temp>lowbit(htonl(rt_walker->mask.s_addr)))
-        {
-          temp=33;
-        }
-
-      if(temp<min){min=temp;result=rt_walker;}
-      rt_walker=rt_walker->next;
-    }
-  if(min==33){return NULL;}
-  else{return result;}
+  while(rtable) {
+    temp_ip=htonl(rtable->dest.s_addr);
+    unsigned int temp=(~(temp_ip ^ ip));
+    if(temp>mx){mx=temp;result=rtable;}
+    rtable=rtable->next;
+  }
+  if(mx==0) return NULL;
+  return result;
 }
 
 
@@ -171,7 +147,7 @@ void handle_arpreq(struct sr_instance* sr, struct sr_arpreq *req){
 
       sr_ethernet_hdr_t* ethernet_header;
       ethernet_header = (sr_ethernet_hdr_t*)packet;
-      
+
       sr_arp_hdr_t* arp_header;
       arp_header = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
 
@@ -258,7 +234,7 @@ void process_ip(struct sr_instance* sr,
   else {
     struct sr_arpentry *entry;
     packet_ip_header->ip_ttl--;
-    struct sr_rt * rt_entry =  getLargestPrefix(sr->routing_table, packet_ip_header->ip_dst);
+    struct sr_rt * rt_entry =  largest_prefix_match(sr->routing_table, packet_ip_header->ip_dst);
     if(rt_entry != NULL) {
       entry = sr_arpcache_lookup(&sr->cache, rt_entry->dest.s_addr);
 
