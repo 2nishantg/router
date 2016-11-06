@@ -30,22 +30,6 @@
 
 /* See pseudo-code in sr_arpcache.h */
 
-struct sr_if* lookup_interface(struct sr_instance *sr, uint32_t ip){
-  uint32_t mx = 0,temp_ip;
-  ip = htonl(ip);
-  struct sr_if* interface, *destination;
-  interface = sr->if_list;
-  while(interface != NULL){
-    temp_ip = htonl(interface->ip);
-    unsigned int temp=(~(temp_ip ^ ip));
-    if(temp > mx) {
-      destination = interface;
-      mx = temp;
-    }
-    interface = interface->next;
-  }
-  return destination;
-}
 
 struct sr_rt* largest_prefix_match(struct sr_rt * rtable,uint32_t ip) {
   ip=htonl(ip);
@@ -71,6 +55,23 @@ int is_own(struct sr_if* iface, sr_ip_hdr_t *packet_ip_header){
     iface = iface->next;
   }
   return 0;
+}
+
+struct sr_if* lookup_interface(struct sr_instance *sr, uint32_t ip){
+  uint32_t mx = 0,temp_ip;
+  ip = htonl(ip);
+  struct sr_if* interface, *destination;
+  interface = sr->if_list;
+  while(interface != NULL){
+    temp_ip = htonl(interface->ip);
+    unsigned int temp=(~(temp_ip ^ ip));
+    if(temp > mx) {
+      destination = interface;
+      mx = temp;
+    }
+    interface = interface->next;
+  }
+  return destination;
 }
 
 
